@@ -1,0 +1,448 @@
+{% extends "base.html" %}
+{% block title %}Scan Report - {{ scan.pss_id }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+            <h2>📋 Scan Report</h2>
+            <p>{{ scan.pss_id }} — {{ scan.app_name }} ({{ scan.platform }})</p>
+        </div>
+        <div style="display:flex;gap:8px;">
+            <a href="/" class="btn btn-outline btn-sm">← Dashboard</a>
+            <button onclick="deleteScan({{ scan.id }})" class="btn btn-danger btn-sm">🗑 Delete</button>
+        </div>
+    </div>
+</div>
+
+<div class="page-content">
+    <!-- App Info & Risk Score -->
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:24px;margin-bottom:32px;">
+        <div class="card">
+            <div class="card-header">
+                <h3>📱 Application Information</h3>
+                <span class="risk-badge {{ scan.risk_level.lower() }}">
+                    Risk: {{ scan.risk_level }} ({{ scan.risk_score }})
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="info-grid">
+                    <div class="info-item"><div class="label">PSS ID</div><div class="value mono">{{ scan.pss_id }}</div></div>
+                    <div class="info-item"><div class="label">Test Owner</div><div class="value">{{ scan.test_owner }}</div></div>
+                    <div class="info-item"><div class="label">Scan Date</div><div class="value">{{ scan.scan_date.strftime('%Y-%m-%d %H:%M:%S') if scan.scan_date else 'N/A' }}</div></div>
+                    <div class="info-item"><div class="label">Platform</div><div class="value">{{ '🤖 Android' if scan.platform == 'Android' else '🍎 iOS' }}</div></div>
+                    <div class="info-item"><div class="label">App Name</div><div class="value">{{ scan.app_name }}</div></div>
+                    <div class="info-item"><div class="label">Package / Bundle ID</div><div class="value mono">{{ scan.package_name }}</div></div>
+                    <div class="info-item"><div class="label">Version</div><div class="value mono">{{ scan.version }}</div></div>
+                    <div class="info-item"><div class="label">File Name</div><div class="value mono">{{ scan.file_name }}</div></div>
+                    <div class="info-item"><div class="label">File Size</div><div class="value">{{ format_file_size(scan.file_size) }}</div></div>
+                    <div class="info-item"><div class="label">SHA-256</div><div class="value mono" style="font-size:11px;">{{ scan.file_hash[:32] }}...</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="display:flex;align-items:center;justify-content:center;">
+            <div class="card-body" style="text-align:center;">
+                <div class="risk-gauge">
+                    <svg viewBox="0 0 180 180" width="180" height="180">
+                        <circle cx="90" cy="90" r="76" class="gauge-bg"/>
+                        <circle cx="90" cy="90" r="76" class="gauge-fill"
+                                stroke="{{ '#ff1744' if scan.risk_level == 'Critical' else '#ff6d00' if scan.risk_level == 'High' else '#ffd600' if scan.risk_level == 'Medium' else '#00e676' }}"
+                                stroke-dasharray="477"
+                                stroke-dashoffset="{{ 477 - (scan.risk_score * 477 / 100) if scan.risk_score <= 100 else 0 }}"/>
+                    </svg>
+                    <div class="gauge-text">
+                        <div class="gauge-value">{{ scan.risk_score }}</div>
+                        <div class="gauge-label">{{ scan.risk_level }}</div>
+                    </div>
+                </div>
+                <div class="severity-badges" style="justify-content:center;margin-top:16px;">
+                    <span class="severity-badge critical">C: {{ scan.critical_count }}</span>
+                    <span class="severity-badge high">H: {{ scan.high_count }}</span>
+                    <span class="severity-badge medium">M: {{ scan.medium_count }}</span>
+                    <span class="severity-badge low">L: {{ scan.low_count }}</span>
+                    <span class="severity-badge info">I: {{ scan.info_count }}</span>
+                </div>
+                <div style="margin-top:16px;font-size:13px;color:var(--text-secondary);">
+                    {{ scan.pass_count }} passed · {{ scan.fail_count }} failed · {{ scan.warning_count }} warnings
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab active" onclick="switchTab('results', this)">🔍 MASTG Results</button>
+        <button class="tab" onclick="switchTab('frida', this)">🎭 Frida Scripts</button>
+        <button class="tab" onclick="switchTab('dynamic', this)">⚡ Dynamic Analysis</button>
+        <button class="tab" onclick="switchTab('json', this)">📄 Raw JSON</button>
+    </div>
+
+    <!-- Results Tab -->
+    <div class="tab-content active" id="tab-results">
+        <div class="filter-tabs" id="filterTabs">
+            <button class="filter-tab active" onclick="filterResults('all', this)">All</button>
+            <button class="filter-tab" onclick="filterResults('FAIL', this)">🔴 Failed</button>
+            <button class="filter-tab" onclick="filterResults('WARNING', this)">🟡 Warnings</button>
+            <button class="filter-tab" onclick="filterResults('PASS', this)">🟢 Passed</button>
+            <button class="filter-tab" onclick="filterResults('Storage', this)">💾 Storage</button>
+            <button class="filter-tab" onclick="filterResults('Cryptography', this)">🔐 Crypto</button>
+            <button class="filter-tab" onclick="filterResults('Authentication', this)">🔑 Auth</button>
+            <button class="filter-tab" onclick="filterResults('Network', this)">🌐 Network</button>
+            <button class="filter-tab" onclick="filterResults('Platform', this)">📱 Platform</button>
+            <button class="filter-tab" onclick="filterResults('Code Quality', this)">💻 Code</button>
+            <button class="filter-tab" onclick="filterResults('Resilience', this)">🛡 Resilience</button>
+        </div>
+
+        <div id="resultsList">
+            {% for result in results.results|sort(attribute='status') %}
+            <div class="result-item {{ result.status|lower }}"
+                 data-status="{{ result.status }}"
+                 data-category="{{ result.category }}">
+                <div class="result-header">
+                    <span class="test-id">{{ result.test_id }}</span>
+                    <span class="test-name">{{ result.test_name }}</span>
+                    <span class="severity-badge {{ result.severity|lower }}">{{ result.severity }}</span>
+                    <span class="status-badge {{ result.status|lower }}">{{ result.status }}</span>
+                </div>
+                <div class="result-description">{{ result.description }}</div>
+                {% if result.status != 'PASS' and result.status != 'INFO' %}
+                <div class="result-details">{{ result.details }}</div>
+                {% if result.evidence and result.evidence|length > 0 %}
+                <div style="margin-top:8px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:6px;">📎 Evidence ({{ result.evidence|length }} finding{{ 's' if result.evidence|length > 1 }})</div>
+                    <div class="result-details" style="border-left:3px solid var(--accent);background:var(--accent-dim);">
+                        {% for ev in result.evidence %}
+                        <div style="padding:2px 0;font-family:var(--font-mono);font-size:11px;">▸ {{ ev }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% endif %}
+                {% if result.status == 'PASS' and result.evidence and result.evidence|length > 0 and result.evidence[0] != 'No issues found by static analysis' %}
+                <div style="margin-top:4px;">
+                    <span style="font-size:11px;color:var(--pass);">✓ {{ result.evidence[0] }}</span>
+                </div>
+                {% endif %}
+                <div class="result-recommendation">{{ result.recommendation }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Frida Tab -->
+    <div class="tab-content" id="tab-frida">
+        <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
+            <div>
+                <h3 style="color:var(--text-bright);margin-bottom:4px;">Generated Frida Script</h3>
+                <p style="color:var(--text-secondary);font-size:13px;">Auto-generated based on detected security controls</p>
+            </div>
+            <button onclick="copyFridaScript()" class="btn btn-outline btn-sm">📋 Copy Script</button>
+        </div>
+        <div class="code-block">
+            <div class="code-block-header">
+                <span class="lang">JavaScript (Frida)</span>
+                <span style="font-size:11px;color:var(--text-muted);">mobiscan_{{ scan.package_name }}.js</span>
+            </div>
+            <pre><code id="fridaCode">{{ frida_script }}</code></pre>
+        </div>
+        <div style="margin-top:16px;padding:16px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius-sm);">
+            <h4 style="color:var(--text-bright);margin-bottom:8px;">📖 Usage Instructions</h4>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary);background:var(--bg-input);padding:12px;border-radius:var(--radius-sm);">
+                {% if scan.platform == 'Android' %}
+                frida -U -f {{ scan.package_name }} -l mobiscan_{{ scan.package_name }}.js --no-pause
+                {% else %}
+                frida -U -f {{ scan.package_name }} -l mobiscan_{{ scan.package_name }}.js
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Dynamic Analysis Tab -->
+    <div class="tab-content" id="tab-dynamic">
+        <div style="margin-bottom:16px;">
+            <h3 style="color:var(--text-bright);margin-bottom:8px;">⚡ Live Dynamic Analysis</h3>
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">
+                Connect to a running Android device/emulator via ADB and run dynamic security tests with Frida.
+            </p>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+                <h3>🔌 Device Connection</h3>
+                <button onclick="dynDetectDevices()" class="btn btn-outline btn-sm">🔄 Detect Devices</button>
+            </div>
+            <div class="card-body">
+                <div id="dynDeviceStatus" style="color:var(--text-secondary);font-size:13px;">
+                    Click "Detect Devices" to find connected Android devices/emulators.
+                </div>
+                <div id="dynDeviceList" style="margin-top:12px;"></div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+                <h3>🧪 Dynamic Security Tests</h3>
+                <button onclick="dynRunAll()" class="btn btn-primary btn-sm" id="dynRunBtn" disabled>▶ Run All</button>
+            </div>
+            <div class="card-body">
+                <div id="dynTests">
+                    <div class="dynamic-test" data-test="root_detection">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">🛡 Root Detection Bypass</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Bypass root checks via Frida hooks</div>
+                            </div>
+                            <button onclick="dynRunTest('root_detection')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="ssl_pinning">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">🔒 SSL Pinning Bypass</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Bypass certificate pinning</div>
+                            </div>
+                            <button onclick="dynRunTest('ssl_pinning')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="insecure_storage">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">💾 Storage Monitor</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Monitor SharedPreferences writes at runtime</div>
+                            </div>
+                            <button onclick="dynRunTest('insecure_storage')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="network_monitor">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">🌐 Network Interceptor</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Intercept HTTP/HTTPS requests</div>
+                            </div>
+                            <button onclick="dynRunTest('network_monitor')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="crypto_monitor">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">🔐 Crypto Key Extraction</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Extract encryption keys at runtime</div>
+                            </div>
+                            <button onclick="dynRunTest('crypto_monitor')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="intent_sniffer">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">📨 Intent Sniffer</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Capture all intents and deep links</div>
+                            </div>
+                            <button onclick="dynRunTest('intent_sniffer')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="webview_monitor">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">🌍 WebView JS Injection</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Test WebView bridge security</div>
+                            </div>
+                            <button onclick="dynRunTest('webview_monitor')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                    <div class="dynamic-test" data-test="biometric_bypass">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;">
+                            <div>
+                                <div style="font-weight:600;color:var(--text-bright);font-size:14px;">👆 Biometric Bypass</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">Bypass fingerprint/face authentication</div>
+                            </div>
+                            <button onclick="dynRunTest('biometric_bypass')" class="btn btn-outline btn-sm" disabled>Run</button>
+                        </div>
+                        <div class="dynamic-result" style="display:none;padding:12px;background:var(--bg-input);border-radius:var(--radius-sm);margin-top:8px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>📟 Live Console</h3>
+                <button onclick="document.getElementById('dynConsole').innerHTML=''" class="btn btn-outline btn-sm">Clear</button>
+            </div>
+            <div class="card-body" style="padding:0;">
+                <div id="dynConsole" style="height:250px;overflow-y:auto;padding:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);background:#0d1117;">
+                    <div style="color:var(--accent);">[MobiScan] Dynamic analysis console ready.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JSON Tab -->
+    <div class="tab-content" id="tab-json">
+        <div style="margin-bottom:16px;">
+            <button onclick="copyJSON()" class="btn btn-outline btn-sm">📋 Copy JSON</button>
+        </div>
+        <div class="code-block">
+            <div class="code-block-header"><span class="lang">JSON</span></div>
+            <pre><code id="jsonCode">{{ results | tojson(indent=2) }}</code></pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function switchTab(tabId, el) {
+        document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+        document.getElementById('tab-' + tabId).classList.add('active');
+        if (el) el.classList.add('active');
+    }
+
+    function filterResults(filter, el) {
+        document.querySelectorAll('.filter-tab').forEach(function(t) { t.classList.remove('active'); });
+        el.classList.add('active');
+        document.querySelectorAll('.result-item').forEach(function(item) {
+            if (filter === 'all') { item.style.display = ''; }
+            else if (['FAIL', 'WARNING', 'PASS', 'INFO'].indexOf(filter) >= 0) { item.style.display = item.dataset.status === filter ? '' : 'none'; }
+            else { item.style.display = item.dataset.category === filter ? '' : 'none'; }
+        });
+    }
+
+    function copyFridaScript() {
+        var code = document.getElementById('fridaCode').textContent;
+        navigator.clipboard.writeText(code).then(function() { showToast('Frida script copied!', 'success'); });
+    }
+
+    function copyJSON() {
+        var code = document.getElementById('jsonCode').textContent;
+        navigator.clipboard.writeText(code).then(function() { showToast('JSON copied!', 'success'); });
+    }
+
+    function deleteScan(id) {
+        if (confirm('Delete this scan?')) {
+            fetch('/api/scan/' + id, { method: 'DELETE' }).then(function(r) { return r.json(); }).then(function(d) { if (d.success) window.location.href = '/'; });
+        }
+    }
+
+    // ─── Dynamic Analysis (inline scripts, no backticks) ───
+    var dynConnected = false;
+    var dynSerial = null;
+    var dynPackage = '{{ scan.package_name }}';
+
+    function dynLog(msg, type) {
+        var c = document.getElementById('dynConsole');
+        var t = new Date().toLocaleTimeString();
+        var colors = {error:'#ff1744', success:'#00e676', warning:'#ffd600', info:'#8892b0'};
+        c.innerHTML += '<div style="color:' + (colors[type] || colors.info) + '">[' + t + '] ' + msg + '</div>';
+        c.scrollTop = c.scrollHeight;
+    }
+
+    async function dynDetectDevices() {
+        dynLog('Detecting devices...');
+        document.getElementById('dynDeviceStatus').innerHTML = '<div class="spinner" style="width:16px;height:16px;"></div>';
+        try {
+            var r = await fetch('/api/dynamic/detect-devices');
+            var d = await r.json();
+            if (d.devices && d.devices.length > 0) {
+                document.getElementById('dynDeviceStatus').innerHTML = '<span style="color:#00e676;">Found ' + d.devices.length + ' device(s)</span>';
+                var html = '';
+                d.devices.forEach(function(dev) {
+                    html += '<div style="padding:10px 16px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">'
+                        + '<div><span style="font-family:var(--font-mono);color:var(--accent);font-weight:600;">' + dev.serial + '</span> '
+                        + '<span style="font-size:12px;color:var(--text-secondary);">' + dev.model + ' (Android ' + dev.android_version + ')</span></div>'
+                        + '<button onclick="dynConnect(\'' + dev.serial + '\')" class="btn btn-primary btn-sm">Connect</button></div>';
+                });
+                document.getElementById('dynDeviceList').innerHTML = html;
+                dynLog('Found: ' + d.devices.map(function(d){return d.serial}).join(', '), 'success');
+            } else {
+                document.getElementById('dynDeviceStatus').innerHTML = '<span style="color:#ffd600;">No devices found. Connect via USB or start emulator.</span>';
+                dynLog('No devices found.', 'warning');
+            }
+        } catch(e) {
+            document.getElementById('dynDeviceStatus').innerHTML = '<span style="color:#ff1744;">Error: ' + e.message + '</span>';
+            dynLog('Error: ' + e.message, 'error');
+        }
+    }
+
+    async function dynConnect(serial) {
+        dynLog('Connecting to ' + serial + '...');
+        try {
+            var r = await fetch('/api/dynamic/connect', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({serial: serial, package: dynPackage})
+            });
+            var d = await r.json();
+            if (d.success) {
+                dynConnected = true;
+                dynSerial = serial;
+                dynPackage = d.package;
+                document.querySelectorAll('#dynTests .dynamic-test button').forEach(function(b) { b.disabled = false; });
+                document.getElementById('dynRunBtn').disabled = false;
+                dynLog('Connected! Package: ' + d.package, 'success');
+                showToast('Connected to ' + serial, 'success');
+            } else {
+                dynLog('Failed: ' + d.error, 'error');
+            }
+        } catch(e) { dynLog('Error: ' + e.message, 'error'); }
+    }
+
+    // Frida scripts as regular strings (no backticks)
+    var DYN_SCRIPTS = {};
+    DYN_SCRIPTS['root_detection'] = 'Java.perform(function(){var F=Java.use("java.io.File");var p=["/system/app/Superuser.apk","/system/app/SuperSU.apk","/system/xbin/su","/system/bin/su","/sbin/su"];F.exists.implementation=function(){var a=this.getAbsolutePath();if(p.indexOf(a)!==-1){console.log("[BYPASS] Root: "+a);return false;}return this.exists();};var R=Java.use("java.lang.Runtime");R.exec.overload("java.lang.String").implementation=function(c){if(c.indexOf("su")!==-1){console.log("[BLOCK] "+c);throw Java.use("java.io.IOException").$new("blocked");}return this.exec(c);};console.log("[OK] Root bypass loaded");});';
+    DYN_SCRIPTS['ssl_pinning'] = 'Java.perform(function(){try{var T=Java.use("com.android.org.conscrypt.TrustManagerImpl");T.verifyChain.implementation=function(u,t,h,c,o,s){console.log("[BYPASS] SSL "+h);return u;};}catch(e){}try{var P=Java.use("okhttp3.CertificatePinner");P.check.overload("java.lang.String","java.util.List").implementation=function(h,p){console.log("[BYPASS] Pin "+h);};}catch(e){}try{var W=Java.use("android.webkit.WebViewClient");W.onReceivedSslError.implementation=function(v,h,e){console.log("[BYPASS] WebView SSL");h.proceed();};}catch(e){}console.log("[OK] SSL bypass loaded");});';
+    DYN_SCRIPTS['insecure_storage'] = 'Java.perform(function(){var SP=Java.use("android.app.SharedPreferencesImpl");SP.getString.implementation=function(k,d){var r=this.getString(k,d);if(r&&r.length>4)console.log("[STORE] "+k+" = "+r);return r;};var SK=Java.use("javax.crypto.spec.SecretKeySpec");SK.$init.overload("[B","java.lang.String").implementation=function(k,a){var h="";for(var i=0;i<Math.min(k.length,32);i++)h+=("0"+(k[i]&0xFF).toString(16)).slice(-2);console.log("[KEY] "+a+" "+h);return this.$init(k,a);};console.log("[OK] Storage monitor loaded");});';
+    DYN_SCRIPTS['network_monitor'] = 'Java.perform(function(){try{var RC=Java.use("okhttp3.RealCall");RC.execute.implementation=function(){var r=this.request();console.log("[NET] "+r.method()+" "+r.url());return this.execute();};}catch(e){}var U=Java.use("java.net.URL");U.openConnection.overload().implementation=function(){console.log("[NET] Open "+this.toString());return this.openConnection();};console.log("[OK] Network monitor loaded");});';
+    DYN_SCRIPTS['crypto_monitor'] = 'Java.perform(function(){var SK=Java.use("javax.crypto.spec.SecretKeySpec");SK.$init.overload("[B","java.lang.String").implementation=function(k,a){var h="";for(var i=0;i<Math.min(k.length,64);i++)h+=("0"+(k[i]&0xFF).toString(16)).slice(-2);console.log("[KEY] "+a+" "+h);return this.$init(k,a);};var KS=Java.use("java.security.KeyStore");KS.getKey.implementation=function(a,p){console.log("[KS] "+a);return this.getKey(a,p);};console.log("[OK] Crypto monitor loaded");});';
+    DYN_SCRIPTS['intent_sniffer'] = 'Java.perform(function(){var A=Java.use("android.app.Activity");A.onCreate.overload("android.os.Bundle").implementation=function(b){var i=this.getIntent();if(i){console.log("[INTENT] "+this.getClass().getName());var a=i.getAction();if(a)console.log("  Action: "+a);var d=i.getDataString();if(d)console.log("  Data: "+d);var e=i.getExtras();if(e){var k=e.keySet().iterator();while(k.hasNext()){var n=k.next();console.log("  "+n+" = "+e.get(n));}}}this.onCreate(b);};console.log("[OK] Intent sniffer loaded");});';
+    DYN_SCRIPTS['webview_monitor'] = 'Java.perform(function(){var W=Java.use("android.webkit.WebView");W.addJavascriptInterface.overload("java.lang.Object","java.lang.String").implementation=function(o,n){console.log("[WV] Bridge: "+n+" -> "+o.getClass().getName());return this.addJavascriptInterface(o,n);};W.loadUrl.overload("java.lang.String").implementation=function(u){console.log("[WV] loadUrl: "+u);return this.loadUrl(u);};var S=Java.use("android.webkit.WebSettings");S.setJavaScriptEnabled.implementation=function(f){console.log("[WV] JS: "+f);return this.setJavaScriptEnabled(f);};console.log("[OK] WebView monitor loaded");});';
+    DYN_SCRIPTS['biometric_bypass'] = 'Java.perform(function(){try{var BP=Java.use("androidx.biometric.BiometricPrompt");BP.authenticate.overload("androidx.biometric.BiometricPrompt$PromptInfo").implementation=function(i){console.log("[BIO] auth called - bypassing");return this.authenticate(i);};}catch(e){}try{var FM=Java.use("android.hardware.fingerprint.FingerprintManager");FM.authenticate.overload("android.hardware.fingerprint.FingerprintManager$CryptoObject","android.os.CancellationSignal","int","android.hardware.fingerprint.FingerprintManager$AuthenticationCallback","android.os.Handler").implementation=function(cs,c,s,cb,h){console.log("[BIO] Fingerprint bypass");cb.onAuthenticationSucceeded(null);};}catch(e){}console.log("[OK] Biometric bypass loaded");});';
+
+    async function dynRunTest(name) {
+        if (!dynConnected) { showToast('Connect a device first!', 'error'); return; }
+        var script = DYN_SCRIPTS[name];
+        if (!script) return;
+        var el = document.querySelector('.dynamic-test[data-test="' + name + '"]');
+        var res = el.querySelector('.dynamic-result');
+        var btn = el.querySelector('button');
+        btn.disabled = true; btn.textContent = '...';
+        res.style.display = 'block';
+        res.innerHTML = '<div class="spinner" style="width:14px;height:14px;"></div>';
+        dynLog('Running: ' + name + '...');
+
+        try {
+            var r = await fetch('/api/dynamic/run-test', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({serial: dynSerial, package: dynPackage, test: name, script: script})
+            });
+            var d = await r.json();
+            if (d.success) {
+                res.innerHTML = '<div style="color:#00e676;font-weight:600;">Completed</div><pre style="margin-top:8px;font-size:11px;max-height:200px;overflow-y:auto;white-space:pre-wrap;color:var(--text-secondary);">' + (d.output || 'No output') + '</pre>';
+                dynLog(name + ': completed', 'success');
+            } else {
+                res.innerHTML = '<div style="color:#ff1744;">Error: ' + (d.error || 'Unknown') + '</div>';
+                dynLog(name + ': ' + d.error, 'error');
+            }
+        } catch(e) {
+            res.innerHTML = '<div style="color:#ff1744;">Error: ' + e.message + '</div>';
+            dynLog(name + ': ' + e.message, 'error');
+        }
+        btn.disabled = false; btn.textContent = 'Run';
+    }
+
+    async function dynRunAll() {
+        var tests = ['root_detection', 'ssl_pinning', 'insecure_storage', 'network_monitor', 'crypto_monitor', 'intent_sniffer', 'webview_monitor', 'biometric_bypass'];
+        for (var i = 0; i < tests.length; i++) {
+            await dynRunTest(tests[i]);
+            await new Promise(function(r) { setTimeout(r, 500); });
+        }
+    }
+</script>
+{% endblock %}

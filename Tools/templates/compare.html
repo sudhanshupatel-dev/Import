@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}App Comparison{% endblock %}
+{% block nav_compare %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>🔀 App Comparison</h2>
+    <p>Compare different versions of the same application to track security improvements</p>
+</div>
+
+<div class="page-content">
+    {% if groups %}
+    <div style="margin-bottom:24px;">
+        <p style="color:var(--text-secondary);font-size:14px;">
+            Select two scans of the same app to compare. Apps with multiple scans can be compared across versions.
+        </p>
+    </div>
+
+    {% for group in groups %}
+    <div class="package-card">
+        <div class="package-card-header">
+            <div>
+                <span style="font-size:20px;margin-right:8px;">{{ '🤖' if group.platform == 'Android' else '🍎' }}</span>
+                <span class="pkg-name">{{ group.package_name }}</span>
+                <span style="margin-left:8px;font-size:12px;color:var(--text-muted);">
+                    {{ group.app_name }} · {{ group.scan_count }} scan{{ 's' if group.scan_count != 1 }}
+                </span>
+            </div>
+            <div>
+                <button class="btn btn-primary btn-sm" disabled
+                        id="compareBtn_{{ group.package_name | replace('.', '_') | replace('-', '_') }}"
+                        onclick="goCompare('{{ group.package_name }}')">
+                    🔀 Compare Selected
+                </button>
+            </div>
+        </div>
+        <div class="package-card-body">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:40px;"></th>
+                            <th>Version</th>
+                            <th>Owner</th>
+                            <th>Risk</th>
+                            <th>Critical</th>
+                            <th>High</th>
+                            <th>Medium</th>
+                            <th>Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for scan in group.scans %}
+                        <tr>
+                            <td>
+                                <input type="checkbox" class="compare-check"
+                                       data-pkg="{{ group.package_name }}"
+                                       data-scan-id="{{ scan.id }}"
+                                       onchange="updateCompareBtn('{{ group.package_name }}')">
+                            </td>
+                            <td>
+                                <span style="font-family:var(--font-mono);font-weight:600;color:var(--text-bright);">
+                                    {{ scan.version or 'N/A' }}
+                                </span>
+                            </td>
+                            <td>{{ scan.test_owner }}</td>
+                            <td>
+                                <span class="risk-badge {{ scan.risk_level.lower() }}">
+                                    {{ scan.risk_score }}
+                                </span>
+                            </td>
+                            <td><span class="severity-badge critical" style="font-size:11px;">{{ scan.critical_count }}</span></td>
+                            <td><span class="severity-badge high" style="font-size:11px;">{{ scan.high_count }}</span></td>
+                            <td><span class="severity-badge medium" style="font-size:11px;">{{ scan.medium_count }}</span></td>
+                            <td style="font-size:12px;color:var(--text-secondary);">{{ scan.scan_date }}</td>
+                            <td>
+                                <a href="/scan/{{ scan.id }}" class="btn btn-outline btn-sm">📋</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">🔀</div>
+        <h3>No Apps to Compare</h3>
+        <p>Upload multiple versions of the same app to enable comparison</p>
+        <a href="/upload" class="btn btn-primary">📤 Upload App</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const selectedScans = {};
+
+    function updateCompareBtn(pkg) {
+        const checks = document.querySelectorAll(`.compare-check[data-pkg="${pkg}"]`);
+        const selected = [];
+        checks.forEach(c => {
+            if (c.checked) selected.push(c.dataset.scanId);
+        });
+        selectedScans[pkg] = selected;
+
+        const btnId = 'compareBtn_' + pkg.replace(/\./g, '_').replace(/-/g, '_');
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            if (selected.length === 2) {
+                btn.disabled = false;
+            } else {
+                btn.disabled = true;
+            }
+        }
+    }
+
+    function goCompare(pkg) {
+        const sel = selectedScans[pkg];
+        if (sel && sel.length === 2) {
+            window.location.href = '/compare/' + sel[0] + '/' + sel[1];
+        }
+    }
+</script>
+{% endblock %}
